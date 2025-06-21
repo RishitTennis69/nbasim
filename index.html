@@ -253,7 +253,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             const PLAYOFF_WIN_THRESHOLD = 40;
             const TEAM_SIZE = 5;
-            const NUM_BOT_TEAMS = 10;
+            const NUM_BOT_TEAMS = 29;
             const STARTING_CAP_SPACE = 178;
             const DRAFT_ORDER = [
                 { position: "PG", label: "Point Guards" },
@@ -575,6 +575,7 @@
             let currentCapSpace = STARTING_CAP_SPACE;
             let currentPlayoffRound = 0;
             let currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0 };
+            let userDraftPick = null;
 
             modalCloseBtn.addEventListener('click', () => hideModal());
 
@@ -625,10 +626,16 @@
                 yourTeamNameEl.textContent = selectedTeamName;
                 currentCapSpace = STARTING_CAP_SPACE;
                 capSpaceEl.textContent = currentCapSpace.toFixed(1);
+                
+                userDraftPick = Math.floor(Math.random() * 30) + 1;
+                document.getElementById('your-team-name').innerHTML += ` (Pick #${userDraftPick})`;
+                
+                botTeams = Array.from({ length: NUM_BOT_TEAMS }, () => []);
+                draftedPlayers = [];
+
                 teamSelectionScreen.classList.add('hidden');
                 teamSelectionScreen.classList.remove('flex');
                 gameContainer.classList.remove('hidden');
-                simulateBotDraft();
                 renderPlayers();
             }
 
@@ -680,60 +687,23 @@
                 return card;
             }
 
-            function simulateBotDraft() {
-                botTeams = [];
-                let availablePlayersForBots = players.filter(p => !yourTeam.some(teamPlayer => teamPlayer.name === p.name));
-                draftedPlayers = [];
-                shuffleArray(availablePlayersForBots);
+            function simulateBotPicks(position, count, availablePlayers) {
+                let playersToDraftFrom = [...availablePlayers];
 
-                for (let i = 0; i < NUM_BOT_TEAMS; i++) {
-                    const botTeamRoster = [];
-                    let botCapSpace = STARTING_CAP_SPACE;
-                    let positionsNeeded = [...DRAFT_ORDER.map(d => d.position)];
-                    shuffleArray(positionsNeeded);
+                for (let i = 0; i < count; i++) {
+                    let eligiblePlayers = playersToDraftFrom
+                        .filter(p => p.position.split('/').includes(position))
+                        .sort((a, b) => b.rating - a.rating);
 
-                    for (let k = 0; k < TEAM_SIZE && availablePlayersForBots.length > 0; k++) {
-                        let playerToDraft = null;
-                        let eligiblePlayersForCurrentPos = [];
-                        let foundPlayer = false;
-
-                        for (const targetPosition of positionsNeeded) {
-                            eligiblePlayersForCurrentPos = availablePlayersForBots
-                                .filter(p => p.position.split('/').includes(targetPosition) && p.salary <= botCapSpace)
-                                .sort((a, b) => b.rating - a.rating);
-                            if (eligiblePlayersForCurrentPos.length > 0) {
-                                const pickIndex = Math.floor(Math.random() * Math.min(eligiblePlayersForCurrentPos.length, 7));
-                                playerToDraft = eligiblePlayersForCurrentPos[pickIndex];
-                                foundPlayer = true;
-                                positionsNeeded = positionsNeeded.filter(pos => pos !== targetPosition);
-                                break;
-                            }
-                        }
-
-                        if (!foundPlayer && availablePlayersForBots.length > 0) {
-                            const sortedRemainingPlayers = availablePlayersForBots
-                                .filter(p => p.salary <= botCapSpace)
-                                .sort((a, b) => b.rating - a.rating);
-                            if (sortedRemainingPlayers.length > 0) {
-                                const pickIndex = Math.floor(Math.random() * Math.min(sortedRemainingPlayers.length, 10));
-                                playerToDraft = sortedRemainingPlayers[pickIndex];
-                                foundPlayer = true;
-                                if (playerToDraft) {
-                                    positionsNeeded = positionsNeeded.filter(pos => !playerToDraft.position.split('/').includes(pos));
-                                }
-                            }
-                        }
+                    if (eligiblePlayers.length > 0) {
+                        const pickIndex = Math.floor(Math.random() * Math.min(eligiblePlayers.length, 7));
+                        const playerToDraft = eligiblePlayers[pickIndex];
 
                         if (playerToDraft) {
-                            botTeamRoster.push(playerToDraft);
                             draftedPlayers.push(playerToDraft);
-                            botCapSpace -= playerToDraft.salary;
-                            availablePlayersForBots = availablePlayersForBots.filter(p => p.name !== playerToDraft.name);
-                        } else {
-                            break;
+                            playersToDraftFrom = playersToDraftFrom.filter(p => p.name !== playerToDraft.name);
                         }
                     }
-                    botTeams.push(botTeamRoster);
                 }
             }
 
@@ -754,9 +724,32 @@
                 playerPoolEl.innerHTML = '';
                 yourTeamEl.innerHTML = '';
                 capSpaceEl.textContent = currentCapSpace.toFixed(1);
-                const currentPositionInfo = DRAFT_ORDER[yourTeam.length];
-                const currentPosition = currentPositionInfo?.position;
-                const currentLabel = currentPositionInfo?.label || "Players";
+
+                const currentRoundIndex = yourTeam.length;
+                if (currentRoundIndex >= TEAM_SIZE) {
+                    draftHeaderEl.textContent = 'Your Team is Ready';
+                    botDraftedSectionEl.classList.add('hidden');
+                    simSeasonBtn.disabled = yourTeam.length !== TEAM_SIZE;
+                    playerPoolEl.innerHTML = '<p class="text-center text-muted-foreground">Your draft is complete. Good luck!</p>';
+                    return;
+                }
+
+                const isSnakeRound = (currentRoundIndex % 2) !== 0;
+                const currentUserPick = isSnakeRound ? (31 - userDraftPick) : userDraftPick;
+                const currentPositionInfo = DRAFT_ORDER[currentRoundIndex];
+                const currentPosition = currentPositionInfo.position;
+                const currentLabel = currentPositionInfo.label;
+
+                const botPicksOfCurrentPosition = draftedPlayers.filter(p => p.position.split('/').includes(currentPosition)).length;
+                const picksToSimulate = (currentUserPick - 1) - botPicksOfCurrentPosition;
+                
+                if (picksToSimulate > 0) {
+                    let availableForBots = players
+                        .filter(p => !yourTeam.some(tp => tp.name === p.name))
+                        .filter(p => !draftedPlayers.some(dp => dp.name === p.name));
+                    simulateBotPicks(currentPosition, picksToSimulate, availableForBots);
+                }
+
                 const availablePlayers = players
                     .filter(p => !yourTeam.some(teamPlayer => teamPlayer.name === p.name))
                     .filter(p => !draftedPlayers.some(botPlayer => botPlayer.name === p.name))
@@ -781,7 +774,7 @@
                 playerCountEl.textContent = `${availablePlayers.length}`;
                 positionLabelEl.textContent = currentLabel;
                 simSeasonBtn.disabled = yourTeam.length !== TEAM_SIZE;
-                draftHeaderEl.textContent = yourTeam.length < TEAM_SIZE ? `Draft ${currentPositionInfo.label.slice(0, -1)}` : 'Your Team is Ready';
+                draftHeaderEl.textContent = `Draft ${currentPositionInfo.label.slice(0, -1)} (Your Pick: #${currentUserPick})`;
 
                 if (yourTeam.length === TEAM_SIZE) botDraftedSectionEl.classList.add('hidden');
                 else {
@@ -799,15 +792,29 @@
                     showModal("Insufficient Cap Space!", `You need $${player.salary.toFixed(2)}M to draft ${player.name}, but you only have $${currentCapSpace.toFixed(1)}M remaining.`);
                     return;
                 }
-                const currentPositionInfo = DRAFT_ORDER[yourTeam.length];
-                if (!player.position.split('/').includes(currentPositionInfo.position)) {
-                    resultsDisplay.textContent = `Please draft a ${currentPositionInfo.label.slice(0, -1)}.`;
+                const draftPositionInfo = DRAFT_ORDER[yourTeam.length];
+                if (!player.position.split('/').includes(draftPositionInfo.position)) {
+                    resultsDisplay.textContent = `Please draft a ${draftPositionInfo.label.slice(0, -1)}.`;
                     return;
                 }
                 yourTeam.push(player);
                 currentCapSpace -= player.salary;
-                renderPlayers();
+
+                const currentRoundIndex = yourTeam.length - 1;
+                const isSnakeRound = (currentRoundIndex % 2) !== 0;
+                const currentUserPick = isSnakeRound ? (31 - userDraftPick) : userDraftPick;
+                const currentPositionInfo = DRAFT_ORDER[currentRoundIndex];
+                
+                const picksAfterUser = 30 - currentUserPick;
+                if (picksAfterUser > 0) {
+                    let availableForBots = players
+                        .filter(p => !yourTeam.some(teamPlayer => teamPlayer.name === p.name))
+                        .filter(p => !draftedPlayers.some(botPlayer => botPlayer.name === p.name));
+                    simulateBotPicks(currentPositionInfo.position, picksAfterUser, availableForBots);
+                }
+                
                 resultsDisplay.textContent = `You drafted ${player.name} as your ${currentPositionInfo.label.slice(0, -1)}. Remaining Cap: $${currentCapSpace.toFixed(1)}M.`;
+                renderPlayers();
             }
 
             function removePlayerFromTeam(player) {
@@ -822,6 +829,13 @@
             }
 
             simSeasonBtn.addEventListener('click', () => {
+                if (botTeams.length > 0 && botTeams[0].length === 0) {
+                    const shuffledBotPicks = [...draftedPlayers];
+                    shuffleArray(shuffledBotPicks);
+                    for(let i = 0; i < shuffledBotPicks.length; i++) {
+                        botTeams[i % NUM_BOT_TEAMS].push(shuffledBotPicks[i]);
+                    }
+                }
                 const playerTotalRating = yourTeam.reduce((sum, p) => sum + p.rating, 0);
                 const botTotalRatings = botTeams.map(team => team.reduce((sum, p) => sum + p.rating, 0));
                 const avgBotRating = botTotalRatings.reduce((sum, rating) => sum + rating, 0) / botTeams.length;
@@ -848,6 +862,17 @@
                 simSeasonBtn.style.display = 'none';
                 resetBtn.style.display = 'inline-block';
                 simSeasonBtn.dataset.regularSeasonWins = finalWins;
+                botTeams = [];
+                draftedPlayers = [];
+                currentCapSpace = STARTING_CAP_SPACE;
+                userDraftPick = null;
+                resultsDisplay.textContent = 'Draft your 5-player team to begin!';
+                simPlayoffsBtn.style.display = 'none';
+                simPlayoffsBtn.textContent = 'Simulate Playoffs';
+                gameContainer.classList.add('hidden');
+                currentPlayoffRound = 0;
+                currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0 };
+                renderTeams();
             });
 
             function getOpponentRating(round, regularSeasonWins) {
@@ -955,6 +980,7 @@
                 botTeams = [];
                 draftedPlayers = [];
                 currentCapSpace = STARTING_CAP_SPACE;
+                userDraftPick = null;
                 resultsDisplay.textContent = 'Draft your 5-player team to begin!';
                 simPlayoffsBtn.style.display = 'none';
                 simPlayoffsBtn.textContent = 'Simulate Playoffs';
