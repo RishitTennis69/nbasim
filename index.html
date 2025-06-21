@@ -226,7 +226,7 @@
                     </div>
                     <div class="mb-4">
                         <p class="text-lg font-semibold">Team: <span id="your-team-name" class="font-bold text-primary"></span></p>
-                        <p class="text-lg font-semibold">Cap Space Remaining: $<span id="cap-space">178</span>M</p>
+                        <p class="text-lg font-semibold">Cap Space Remaining: $<span id="cap-space">145</span>M</p>
                     </div>
                     <div id="your-team" class="bg-card border rounded-lg p-4 min-h-[24rem] shadow-sm"></div>
                 </div>
@@ -254,7 +254,7 @@
             const PLAYOFF_WIN_THRESHOLD = 40;
             const TEAM_SIZE = 5;
             const NUM_BOT_TEAMS = 10;
-            const STARTING_CAP_SPACE = 178;
+            const STARTING_CAP_SPACE = 145;
             const DRAFT_ORDER = [
                 { position: "PG", label: "Point Guards" },
                 { position: "SG", label: "Shooting Guards" },
@@ -573,7 +573,7 @@
             let draftedPlayers = [];
             let currentCapSpace = STARTING_CAP_SPACE;
             let currentPlayoffRound = 0;
-            let currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0 };
+            let currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0, opponentTeam: null };
 
             modalCloseBtn.addEventListener('click', () => hideModal());
 
@@ -858,6 +858,53 @@
                 return Math.max(70, Math.min(99, opponentRating));
             }
 
+            function sortTeamByPosition(team) {
+                const sortedTeam = [];
+                const usedPlayerNames = new Set();
+                DRAFT_ORDER.forEach(orderInfo => {
+                    const position = orderInfo.position;
+                    const availablePlayers = team.filter(p => !usedPlayerNames.has(p.name));
+                    let playerForPos = availablePlayers.find(p => p.position.split('/')[0] === position);
+                    if (!playerForPos) {
+                        playerForPos = availablePlayers.find(p => p.position.split('/').includes(position));
+                    }
+                    if (playerForPos) {
+                        sortedTeam.push(playerForPos);
+                        usedPlayerNames.add(playerForPos.name);
+                    } else {
+                        sortedTeam.push({ name: 'Empty', salary: 0, position: 'N/A' });
+                    }
+                });
+                team.forEach(p => {
+                    if (!usedPlayerNames.has(p.name)) {
+                        sortedTeam.push(p);
+                    }
+                });
+                return sortedTeam.slice(0, 5);
+            }
+
+            function buildComparisonHtml(userTeam, opponentTeam) {
+                if (!opponentTeam) return '';
+                const sortedOpponentTeam = sortTeamByPosition(opponentTeam);
+                let tableHtml = '<div class="mt-4 text-left"><h4 class="font-semibold text-lg mb-2 text-center">Positional Matchup</h4><table class="w-full">';
+                tableHtml += '<thead><tr class="text-muted-foreground"><th class="p-2">POS</th><th class="p-2 text-center">Your Team</th><th class="p-2 text-center">Opponent</th></tr></thead>';
+                tableHtml += '<tbody>';
+
+                for (let i = 0; i < DRAFT_ORDER.length; i++) {
+                    const position = DRAFT_ORDER[i].position;
+                    const userPlayer = userTeam[i];
+                    const opponentPlayer = sortedOpponentTeam[i];
+
+                    tableHtml += `<tr class="border-b">`;
+                    tableHtml += `<td class="p-2 font-bold">${position}</td>`;
+                    tableHtml += `<td class="p-2 text-center"><div>${userPlayer.name}</div><div class="text-sm text-muted-foreground">$${userPlayer.salary.toFixed(2)}M</div></td>`;
+                    tableHtml += `<td class="p-2 text-center"><div>${opponentPlayer.name}</div><div class="text-sm text-muted-foreground">$${opponentPlayer.salary.toFixed(2)}M</div></td>`;
+                    tableHtml += `</tr>`;
+                }
+                tableHtml += '</tbody></table></div>';
+                return tableHtml;
+            }
+
             function simulateGame(userAvgRating, opponentRating) {
                 // This logic is designed to be consistent with the regular season's win probability calculation.
                 // It uses a linear model based on the difference in average ratings.
@@ -900,7 +947,19 @@
                     
                     if (currentSeries.userWins === 0 && currentSeries.oppWins === 0) {
                         currentSeries.opponentRating = getOpponentRating(currentPlayoffRound, regularSeasonWins);
-                        resultsDisplay.innerHTML = `<p class="text-xl font-bold">Starting ${roundName}!</p><p>First to 4 wins. Opponent rating: ${currentSeries.opponentRating.toFixed(1)}.</p>`;
+                        let closestTeam = botTeams[0];
+                        let minDiff = Infinity;
+                        botTeams.forEach(team => {
+                            if (team.length !== TEAM_SIZE) return;
+                            const avgRating = team.reduce((sum, p) => sum + p.rating, 0) / TEAM_SIZE;
+                            const diff = Math.abs(avgRating - currentSeries.opponentRating);
+                            if (diff < minDiff) {
+                                minDiff = diff;
+                                closestTeam = team;
+                            }
+                        });
+                        currentSeries.opponentTeam = closestTeam;
+                        resultsDisplay.innerHTML = `<p class="text-xl font-bold">Starting ${roundName}!</p><p>First to 4 wins.</p>`;
                     }
 
                     const userWonGame = simulateGame(avgRating, currentSeries.opponentRating);
@@ -911,12 +970,13 @@
                     }
 
                     const gameResultMessage = userWonGame ? "You won the game!" : "You lost the game.";
+                    const comparisonHtml = buildComparisonHtml(yourTeam, currentSeries.opponentTeam);
 
                     resultsDisplay.innerHTML = `
                         <p class="text-xl font-bold">${roundName} - Best of 7</p>
-                        <p>Your Team: <span class="text-green-600">${currentSeries.userWins}</span></p>
-                        <p>Opponent: <span class="text-red-600">${currentSeries.oppWins}</span></p>
-                        <p class="mt-2">${gameResultMessage}</p>
+                        <p>Your Team: <span class="text-green-600">${currentSeries.userWins}</span> | Opponent: <span class="text-red-600">${currentSeries.oppWins}</span></p>
+                        ${comparisonHtml}
+                        <p class="mt-4 font-semibold text-center">${gameResultMessage}</p>
                     `;
 
                     if (currentSeries.userWins === 4) {
@@ -933,7 +993,7 @@
                             currentPlayoffRound++;
                             simPlayoffsBtn.textContent = 'Simulate NBA Finals Game 1';
                         }
-                        currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0 };
+                        currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0, opponentTeam: null };
                     } else if (currentSeries.oppWins === 4) {
                         resultsDisplay.innerHTML = `
                             <p class="text-2xl font-bold text-red-600">Eliminated!</p>
@@ -941,7 +1001,7 @@
                         `;
                         simPlayoffsBtn.style.display = 'none';
                         currentPlayoffRound = 0;
-                        currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0 };
+                        currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0, opponentTeam: null };
                     } else {
                         const nextGame = currentSeries.userWins + currentSeries.oppWins + 1;
                         simPlayoffsBtn.textContent = `Simulate ${roundName} Game ${nextGame}`;
@@ -963,7 +1023,7 @@
                 teamSelectionScreen.classList.add('flex');
                 gameContainer.classList.add('hidden');
                 currentPlayoffRound = 0;
-                currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0 };
+                currentSeries = { userWins: 0, oppWins: 0, opponentRating: 0, opponentTeam: null };
                 renderTeams();
             });
 
